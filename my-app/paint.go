@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
@@ -26,6 +27,8 @@ type point struct{ X, Y float32 }
 // where it was drawn whatever size the picture shows at: a line through its
 // points, back to the first when closed, as a rectangle or a polygon.
 type stroke struct {
+	// kind is the tool that drew it: toolPen, toolRect or toolPolygon.
+	kind   int
 	points []point
 	closed bool
 	color  ui.Color
@@ -37,9 +40,11 @@ const (
 	toolPen = iota
 	toolRect
 	toolPolygon
+	// toolLasso draws a polygon along the edges of the picture.
+	toolLasso
 )
 
-var toolNames = []string{"畫筆", "矩形", "多邊形"}
+var toolNames = []string{"畫筆", "矩形", "多邊形", "套索"}
 
 // closeDistance is how near the first corner of a polygon, in DIPs, a click
 // closes it.
@@ -70,6 +75,7 @@ type paint struct {
 	poly    []point
 	hover   point
 	hovered bool
+	lasso   lasso
 
 	color  int
 	width  float64
@@ -93,25 +99,39 @@ func (p *paint) fit(w, h float32) (ox, oy, scale float32) {
 
 // newStroke starts a stroke in the pen's color and the width it shows at
 // as it is drawn.
-func (p *paint) newStroke(closed bool, scale float32) stroke {
-	return stroke{closed: closed, color: penColors[p.color], width: float32(p.width) / scale}
+// Rectangles and polygons are closed.
+func (p *paint) newStroke(kind int, scale float32) stroke {
+	return stroke{kind: kind, closed: kind != toolPen, color: penColors[p.color], width: float32(p.width) / scale}
 }
 
 // finishPolygon adds the polygon being drawn, when it has a surface.
 func (p *paint) finishPolygon(scale float32) {
 	if len(p.poly) >= 3 && scale > 0 {
-		s := p.newStroke(true, scale)
+		s := p.newStroke(toolPolygon, scale)
 		s.points = p.poly
 		p.strokes = append(p.strokes, s)
 	}
 	p.poly = nil
 }
 
-// undo takes back the last corner of the polygon being drawn, else the
-// last stroke.
+// finishLasso follows the edges back to the first anchor and adds the
+// outline, as a polygon, when it has 3 anchors.
+func (p *paint) finishLasso(scale float32) {
+	if pts := p.lasso.close(); pts != nil && scale > 0 {
+		s := p.newStroke(toolPolygon, scale)
+		s.points = pts
+		p.strokes = append(p.strokes, s)
+	}
+	p.lasso.reset()
+}
+
+// undo takes back the last corner of the polygon or anchor of the lasso
+// being drawn, else the last stroke.
 func (p *paint) undo() {
 	if n := len(p.poly); n > 0 {
 		p.poly = p.poly[:n-1]
+	} else if len(p.lasso.anchors) > 0 {
+		p.lasso.removeLastAnchor()
 	} else if n := len(p.strokes); n > 0 {
 		p.strokes = p.strokes[:n-1]
 	}
@@ -123,6 +143,15 @@ func dist(a, b point) float32 {
 
 func (p *paint) view(c *ui.Context, win *mygo.Window) {
 	t := c.Theme()
+	// The lasso computes off the main thread in the app, and at once in
+	// tests, which have no window.
+	p.lasso.run = func(work func() func()) {
+		if win == nil {
+			work()()
+			return
+		}
+		go func() { win.Update(work()) }()
+	}
 	ui.Column(c).Fill().Gap(12).Children(func() {
 		// The tools, on a bar of glass.
 		ui.Row(c).Padding(8, 12).Gap(10).Radius(24).AlignItems(ui.Center).Wrap().Material(glass.Glass{}).Children(func() {
@@ -132,10 +161,24 @@ func (p *paint) view(c *ui.Context, win *mygo.Window) {
 			if ui.Button(c, "儲存 PNG").Clicked() {
 				p.save(win)
 			}
+			if ui.Button(c, "儲存 JSON").Disabled(len(p.strokes) == 0).Clicked() {
+				p.saveJSON(win)
+			}
 			ui.Box(c).Size(1, 24).Background(t.Border)
 			ui.Segmented(c, &p.tool, toolNames...)
 			if p.tool != toolPolygon {
 				p.poly = nil
+			}
+			if p.tool == toolLasso {
+				p.lasso.prepare(p.img)
+				switch p.lasso.status {
+				case lassoComputing:
+					ui.Text(c, "分析邊緣中…").TextColor(t.TextMuted)
+				case lassoFailed:
+					ui.Text(c, "邊緣分析失敗").TextColor(t.Danger)
+				}
+			} else {
+				p.lasso.reset()
 			}
 			ui.Box(c).Size(1, 24).Background(t.Border)
 			for i, col := range penColors {
@@ -152,12 +195,13 @@ func (p *paint) view(c *ui.Context, win *mygo.Window) {
 			ui.Slider(c, &p.width, 1, 40).Width(120)
 			ui.Textf(c, "%.0f", p.width).Width(24)
 			ui.Box(c).Size(1, 24).Background(t.Border)
-			busy := len(p.strokes) > 0 || len(p.poly) > 0
+			busy := len(p.strokes) > 0 || len(p.poly) > 0 || len(p.lasso.anchors) > 0
 			if ui.Button(c, "復原").Disabled(!busy).Clicked() {
 				p.undo()
 			}
 			if ui.Button(c, "清除").Disabled(!busy).Clicked() {
 				p.strokes, p.poly = nil, nil
+				p.lasso.reset()
 			}
 			if p.status != "" {
 				ui.Text(c, p.status).TextColor(t.TextMuted)
@@ -184,7 +228,7 @@ func (p *paint) view(c *ui.Context, win *mygo.Window) {
 		case toolPen:
 			if pressed {
 				if !p.drawing {
-					p.strokes = append(p.strokes, p.newStroke(false, scale))
+					p.strokes = append(p.strokes, p.newStroke(toolPen, scale))
 					p.drawing = true
 				}
 				s := &p.strokes[len(p.strokes)-1]
@@ -198,7 +242,7 @@ func (p *paint) view(c *ui.Context, win *mygo.Window) {
 			if pressed {
 				if !p.drawing {
 					p.anchor = p.hover
-					p.strokes = append(p.strokes, p.newStroke(true, scale))
+					p.strokes = append(p.strokes, p.newStroke(toolRect, scale))
 					p.drawing = true
 				}
 				a, z := p.anchor, p.hover
@@ -221,6 +265,34 @@ func (p *paint) view(c *ui.Context, win *mygo.Window) {
 			default:
 				p.poly = append(p.poly, p.hover)
 			}
+		case toolLasso:
+			l := &p.lasso
+			snap := lassoSnapDIP / scale
+			if p.hovered {
+				l.move(p.hover, snap)
+			}
+			nearStart := len(l.anchors) >= 3 && p.hovered && dist(p.hover, p.lassoAnchor(0))*scale < lassoCloseDIP
+			switch {
+			case !clicked || !p.hovered:
+			case l.status == lassoComputing:
+				p.status = "邊緣分析中，請稍候"
+			case l.status != lassoReady:
+				p.status = "邊緣分析失敗，請重新切換套索"
+			case double, nearStart:
+				// A double click's first click added the last anchor.
+				p.finishLasso(scale)
+			default:
+				canvas.Focus() // for Backspace and Esc
+				l.addAnchor(p.hover, snap)
+			}
+			if len(l.anchors) > 0 {
+				if canvas.Shortcut(0, ui.KeyBackspace) {
+					l.removeLastAnchor()
+				}
+				if canvas.Shortcut(0, ui.KeyEscape) {
+					p.finishLasso(scale)
+				}
+			}
 		}
 
 		canvas.Draw(func(pt *ui.Painter, r ui.Rect) {
@@ -230,6 +302,7 @@ func (p *paint) view(c *ui.Context, win *mygo.Window) {
 			for _, s := range p.strokes {
 				pt.StrokePath(polyline(s.points, s.closed, at), s.width*scale, s.color)
 			}
+			p.drawLasso(pt, scale, at)
 			if len(p.poly) == 0 {
 				return
 			}
@@ -267,7 +340,105 @@ func (p *paint) view(c *ui.Context, win *mygo.Window) {
 				}
 			})
 		}
+		if p.tool == toolLasso {
+			l := &p.lasso
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Padding(6, 6, 6, 16).Radius(24).Material(glass.Glass{}).Children(func() {
+				ui.Text(c, "左鍵定錨，線會沿著邊緣走；點回起點、雙擊或 Esc 完成，Backspace 刪錨點").Grow(1)
+				if ui.PrimaryButton(c, "完成套索").Disabled(len(l.anchors) < 3).Clicked() {
+					p.finishLasso(scale)
+				}
+				if ui.Button(c, "刪除錨點").Disabled(len(l.anchors) == 0).Clicked() {
+					l.removeLastAnchor()
+				}
+				if ui.Button(c, "取消").Disabled(len(l.anchors) == 0).Clicked() {
+					l.reset()
+				}
+			})
+		}
 	})
+}
+
+// lassoAnchor is the lasso's anchor i, in the picture's pixels.
+func (p *paint) lassoAnchor(i int) point {
+	a, k := p.lasso.anchors[i], p.lasso.edges.k
+	return point{a.X / k, a.Y / k}
+}
+
+// The colors of the lasso being drawn, as gravity's: the outline so far,
+// the line to the pointer along the edges, straight beyond the anchor's
+// paths, and straight while they are computed, and the first anchor when
+// a click there closes the outline.
+var (
+	lassoLine    = ui.Hex("#ff6b6b")
+	lassoPath    = ui.Hex("#ffd166")
+	lassoFar     = ui.Hex("#ef4444")
+	lassoPending = ui.Hex("#9ca3af")
+	lassoClose   = ui.Hex("#22c55e")
+)
+
+// drawLasso draws the lasso being drawn: its outline through the anchors,
+// the line on to the pointer, the anchors, and around the first a ring
+// that turns green when a click would close the outline there.
+func (p *paint) drawLasso(pt *ui.Painter, scale float32, at func(point) (float32, float32)) {
+	l := &p.lasso
+	if len(l.anchors) == 0 || l.edges == nil {
+		return
+	}
+	k := l.edges.k
+	orig := func(q point) (float32, float32) { return at(point{q.X / k, q.Y / k}) }
+	// Over a dark outline, so that they show on pictures of any color.
+	halo := ui.RGBA(0, 0, 0, 0.55)
+	line := func(pts []point, col ui.Color) {
+		path := polyline(pts, false, orig)
+		pt.StrokePath(path, 3.5, halo)
+		pt.StrokePath(path, 1.5, col)
+	}
+	line(l.committed(), lassoLine)
+	if len(l.preview) >= 2 {
+		switch l.kind {
+		case previewPath:
+			line(l.preview, lassoPath)
+		case previewFar, previewPending:
+			col := lassoFar
+			if l.kind == previewPending {
+				col = lassoPending
+			}
+			x0, y0 := orig(l.preview[0])
+			x1, y1 := orig(l.preview[len(l.preview)-1])
+			dashed(pt, x0, y0, x1, y1, 1.5, col)
+		}
+	}
+	for _, a := range l.anchors {
+		x, y := orig(a)
+		var dot ui.Path
+		dot.Circle(x, y, 3.5)
+		pt.FillPath(&dot, lassoLine)
+		pt.StrokePath(&dot, 0.8, ui.RGB(255, 255, 255))
+	}
+	if len(l.anchors) >= 3 {
+		x, y := orig(l.anchors[0])
+		var ring ui.Path
+		ring.Circle(x, y, lassoCloseDIP)
+		if p.hovered && dist(p.hover, p.lassoAnchor(0))*scale < lassoCloseDIP {
+			pt.FillPath(&ring, lassoClose.Alpha(0.2))
+			pt.StrokePath(&ring, 2, lassoClose)
+		} else {
+			pt.StrokePath(&ring, 1, ui.RGB(255, 255, 255))
+		}
+	}
+}
+
+// dashed draws a dashed line, 6 DIPs on and 4 off.
+func dashed(pt *ui.Painter, x0, y0, x1, y1, width float32, col ui.Color) {
+	length := float32(math.Hypot(float64(x1-x0), float64(y1-y0)))
+	if length == 0 {
+		return
+	}
+	ux, uy := (x1-x0)/length, (y1-y0)/length
+	for s := float32(0); s < length; s += 10 {
+		e := min(s+6, length)
+		pt.Line(x0+ux*s, y0+uy*s, x0+ux*e, y0+uy*e, width, col)
+	}
 }
 
 // polyline is the path through points, placed in the window by at, back
@@ -329,21 +500,42 @@ func (p *paint) save(win *mygo.Window) {
 	if win == nil {
 		return
 	}
-	img, strokes, name := p.img, append([]stroke(nil), p.strokes...), p.name
+	img, strokes := p.img, append([]stroke(nil), p.strokes...)
+	p.saveFile(win, "儲存 PNG", p.name+"-drawn.png", mygo.FileFilter{Name: "PNG", Extensions: []string{"png"}}, func() ([]byte, error) {
+		var buf bytes.Buffer
+		err := png.Encode(&buf, render(img, strokes))
+		return buf.Bytes(), err
+	})
+}
+
+// saveJSON asks where to save the shapes' coordinates, as JSON.
+func (p *paint) saveJSON(win *mygo.Window) {
+	if win == nil {
+		return
+	}
+	iw, ih := p.photo.Size()
+	doc := shapesJSON(p.name, iw, ih, p.strokes)
+	p.saveFile(win, "儲存 JSON", p.name+"-shapes.json", mygo.FileFilter{Name: "JSON", Extensions: []string{"json"}}, func() ([]byte, error) {
+		return json.MarshalIndent(doc, "", "  ")
+	})
+}
+
+// saveFile asks where to save a file, then writes what encode returns
+// there, off the main thread, and tells how it went in the status.
+func (p *paint) saveFile(win *mygo.Window, title, name string, filter mygo.FileFilter, encode func() ([]byte, error)) {
 	go func() {
 		path, err := mygo.Dialog.Save(mygo.SaveDialogOptions{
 			Parent:      win,
-			Title:       "儲存 PNG",
-			DefaultPath: name + "-drawn.png",
-			Filters:     []mygo.FileFilter{{Name: "PNG", Extensions: []string{"png"}}},
+			Title:       title,
+			DefaultPath: name,
+			Filters:     []mygo.FileFilter{filter},
 		})
 		if err != nil || path == "" {
 			return
 		}
-		var buf bytes.Buffer
-		err = png.Encode(&buf, render(img, strokes))
+		data, err := encode()
 		if err == nil {
-			err = os.WriteFile(path, buf.Bytes(), 0o644)
+			err = os.WriteFile(path, data, 0o644)
 		}
 		win.Update(func() {
 			if err != nil {
@@ -354,6 +546,70 @@ func (p *paint) save(win *mygo.Window) {
 		})
 	}()
 }
+
+// shapeKinds name the tools in the JSON.
+var shapeKinds = map[int]string{toolPen: "pen", toolRect: "rectangle", toolPolygon: "polygon"}
+
+// shapesDoc is the JSON of the shapes: the picture they were drawn on, and
+// each shape with its points in the picture's pixels, from its top left.
+type shapesDoc struct {
+	Image  imageInfo   `json:"image"`
+	Shapes []shapeJSON `json:"shapes"`
+}
+
+type imageInfo struct {
+	Name   string `json:"name"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
+}
+
+type shapeJSON struct {
+	Type   string      `json:"type"`
+	Color  string      `json:"color"`
+	Width  float32     `json:"width"`
+	Closed bool        `json:"closed"`
+	Points []pointJSON `json:"points"`
+	// Rect is a rectangle's box, for those that read rectangles so.
+	Rect *rectJSON `json:"rect,omitempty"`
+}
+
+type pointJSON struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
+
+type rectJSON struct {
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+}
+
+// round2 keeps two decimals of a coordinate, a hundredth of a pixel.
+func round2(v float32) float64 { return math.Round(float64(v)*100) / 100 }
+
+func shapesJSON(name string, w, h int, strokes []stroke) shapesDoc {
+	doc := shapesDoc{Image: imageInfo{name, w, h}, Shapes: []shapeJSON{}}
+	for _, s := range strokes {
+		sj := shapeJSON{
+			Type:   shapeKinds[s.kind],
+			Color:  fmt.Sprintf("#%02x%02x%02x", s.color.R, s.color.G, s.color.B),
+			Width:  float32(round2(s.width)),
+			Closed: s.closed,
+		}
+		for _, q := range s.points {
+			sj.Points = append(sj.Points, pointJSON{round2(q.X), round2(q.Y)})
+		}
+		if s.kind == toolRect && len(s.points) == 4 {
+			a, z := s.points[0], s.points[2]
+			sj.Rect = &rectJSON{round2(min(a.X, z.X)), round2(min(a.Y, z.Y)), round2(abs(z.X - a.X)), round2(abs(z.Y - a.Y))}
+		}
+		doc.Shapes = append(doc.Shapes, sj)
+	}
+	return doc
+}
+
+func abs(v float32) float32 { return max(v, -v) }
 
 // render draws the strokes on a copy of img.
 func render(img image.Image, strokes []stroke) *image.RGBA {

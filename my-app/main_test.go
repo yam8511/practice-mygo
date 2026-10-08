@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"image"
 	"image/color"
 	"image/draw"
@@ -145,6 +146,30 @@ func TestPolygon(t *testing.T) {
 	}
 	if len(a.paint.strokes) != 2 || len(a.paint.strokes[1].points) != 3 {
 		t.Errorf("strokes %+v after finishing", a.paint.strokes)
+	}
+}
+
+// The JSON gives each shape's kind, style and points in the picture's
+// pixels, and a rectangle's box.
+func TestShapesJSON(t *testing.T) {
+	strokes := []stroke{
+		{kind: toolRect, closed: true, color: ui.Hex("#ef4444"), width: 6,
+			points: []point{{300, 200}, {100.123, 200}, {100.123, 50}, {300, 50}}},
+		{kind: toolPolygon, closed: true, color: ui.Hex("#3b82f6"), width: 4,
+			points: []point{{10, 10}, {90, 10}, {50, 80}}},
+		{kind: toolPen, color: ui.Hex("#10b981"), width: 2.5,
+			points: []point{{1, 2}, {3, 4}}},
+	}
+	data, err := json.Marshal(shapesJSON("photo", 1280, 800, strokes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"image":{"name":"photo","width":1280,"height":800},"shapes":[` +
+		`{"type":"rectangle","color":"#ef4444","width":6,"closed":true,"points":[{"x":300,"y":200},{"x":100.12,"y":200},{"x":100.12,"y":50},{"x":300,"y":50}],"rect":{"x":100.12,"y":50,"width":199.88,"height":150}},` +
+		`{"type":"polygon","color":"#3b82f6","width":4,"closed":true,"points":[{"x":10,"y":10},{"x":90,"y":10},{"x":50,"y":80}]},` +
+		`{"type":"pen","color":"#10b981","width":2.5,"closed":false,"points":[{"x":1,"y":2},{"x":3,"y":4}]}]}`
+	if string(data) != want {
+		t.Errorf("JSON\n%s\nwant\n%s", data, want)
 	}
 }
 
