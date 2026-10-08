@@ -84,7 +84,7 @@ func (a *app) card(c *ui.Context) {
 }
 
 // glassButton is a round button of glass showing label.
-func glassButton(c *ui.Context, label string, g glass.Glass, color ui.Color) *ui.Element {
+func glassButton(c *ui.Context, label string, g glass.Glass, color ui.Color) ui.Element {
 	return ui.Box(c).Size(44, 44).Radius(22).Center().Material(g).Children(func() {
 		ui.Text(c, label).FontSize(20).Bold().TextColor(color)
 	})
