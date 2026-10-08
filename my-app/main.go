@@ -20,9 +20,10 @@ type app struct {
 	name  string
 	count int
 	paint *paint
+	cam   *camera
 }
 
-func newApp() *app { return &app{paint: newPaint()} }
+func newApp() *app { return &app{paint: newPaint(), cam: newCamera()} }
 
 func (a *app) view(c *ui.Context) {
 	// Glass shows what is painted under it, so the window gets a colorful
@@ -37,12 +38,15 @@ func (a *app) view(c *ui.Context) {
 		ui.Column(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Padding(16).Gap(12).Children(func() {
 			ui.Row(c).Justify(ui.Center).Children(func() {
 				ui.Row(c).Padding(4).Radius(20).Material(glass.Glass{}).Children(func() {
-					ui.Segmented(c, &a.page, "首頁", "畫筆")
+					ui.Segmented(c, &a.page, "首頁", "畫筆", "相機")
 				})
 			})
-			if a.page == 1 {
+			switch a.page {
+			case 1:
 				ui.Box(c).Grow(1).Children(func() { a.paint.view(c, a.win) })
-			} else {
+			case 2:
+				ui.Box(c).Grow(1).Children(func() { a.cam.view(c, a.win) })
+			default:
 				ui.Box(c).Grow(1).Center().Children(func() { a.card(c) })
 			}
 		})
