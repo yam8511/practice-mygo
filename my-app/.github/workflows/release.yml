@@ -1,0 +1,31 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Windows, os: ubuntu-latest, platform: "windows/amd64" }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Check the version
+        run: test "$GITHUB_REF_NAME" = "v$(jq -r .version mygo.json)"
+      - name: Install NSIS, for the Windows installer
+        if: matrix.name == 'Windows' && runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y nsis
+      - name: Build, sign and upload to S3/R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+        run: go tool mygo build -platform "${{ matrix.platform }}" -upload

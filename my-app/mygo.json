@@ -1,0 +1,15 @@
+{
+  "name": "my-app",
+  "identifier": "com.example.myapp",
+  "version": "0.1.0",
+  "out": "build",
+  "updates": {
+    "publicKey": "RL4HoX0C+fVT2rjfUohpA25zUCol150HH2nKyBLXCEU=",
+    "url": "https://downloads.example.com/my-app",
+    "s3": {
+      "bucket": "downloads",
+      "prefix": "my-app",
+      "endpoint": "https://<account>.r2.cloudflarestorage.com"
+    }
+  }
+}
