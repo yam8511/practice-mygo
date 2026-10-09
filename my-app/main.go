@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/plugins/glass"
@@ -124,6 +125,9 @@ func main() {
 			FullScreen: true,
 		})
 		go a.autoUpdate()
+		// Quitting ends the process, goroutines and all: the camera is
+		// released first, also before a relaunch into an update opens it.
+		mygo.App.OnWillQuit(func(*mygo.QuitEvent) { a.cam.shutdown(2 * time.Second) })
 		log.Println("Ready Done😊")
 	})
 	log.Println("Run 🏃‍♂️")

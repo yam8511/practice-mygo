@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"sync"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/plugins/glass"
@@ -26,6 +28,9 @@ type camera struct {
 	stop chan struct{}
 	done chan struct{}
 	once *sync.Once
+	// last is the done of the latest capture, kept after it was asked to
+	// stop, for shutdown to wait on.
+	last chan struct{}
 }
 
 func newCamera() *camera { return &camera{} }
@@ -66,7 +71,7 @@ func (cam *camera) open(win *mygo.Window) {
 		return
 	}
 	stop, done := make(chan struct{}), make(chan struct{})
-	cam.stop, cam.done, cam.once = stop, done, &sync.Once{}
+	cam.stop, cam.done, cam.once, cam.last = stop, done, &sync.Once{}, done
 	cam.running, cam.status = true, "開啟中…"
 
 	go func() {
@@ -124,6 +129,20 @@ func (cam *camera) fail(done chan struct{}, msg string) {
 	}
 	cam.running, cam.status = false, msg
 	cam.stop, cam.done = nil, nil
+}
+
+// shutdown stops the capture and waits, up to timeout, until it has
+// released the device, also when it was already asked to stop.
+func (cam *camera) shutdown(timeout time.Duration) {
+	cam.close()
+	if cam.last == nil {
+		return
+	}
+	select {
+	case <-cam.last:
+	case <-time.After(timeout):
+		log.Printf("the camera was not released in %v", timeout)
+	}
 }
 
 // close asks the capture to stop and clears the picture.
