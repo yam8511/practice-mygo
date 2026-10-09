@@ -47,7 +47,7 @@ func (a *app) view(c *ui.Context) {
 		// over them.
 		ui.Column(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Padding(16).Gap(12).Children(func() {
 			ui.Row(c).Justify(ui.Center).Children(func() {
-				ui.Row(c).Padding(4).Radius(20).Material(glass.Glass{}).Children(func() {
+				ui.Row(c).Padding(4).Radius(20).Children(func() {
 					ui.Segmented(c, &a.page, "1.首頁", "2.畫筆", "3.相機")
 				})
 			})
@@ -67,7 +67,7 @@ func (a *app) view(c *ui.Context) {
 // card is the pane of glass holding the app's controls.
 func (a *app) card(c *ui.Context) {
 	t := c.Theme()
-	ui.Column(c).Gap(16).Padding(28).Radius(28).AlignItems(ui.Center).Material(glass.Glass{}).Children(func() {
+	ui.Column(c).Gap(16).Padding(28).Radius(28).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, "My APP").FontSize(26).Bold()
 		ui.TextInput(c, &a.name).Placeholder("Your name").Label("Name").Width(240)
 		greeting := "Hello!"
