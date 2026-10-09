@@ -16,7 +16,7 @@ import (
 const (
 	// updateInterval is how often the app checks for a new version, after
 	// a first check updateFirstWait after it starts.
-	updateInterval  = time.Hour
+	updateInterval  = time.Second * 10
 	updateFirstWait = 10 * time.Second
 	// restartDelay is how many seconds the window counts down after an
 	// update is installed before the app relaunches into it.
