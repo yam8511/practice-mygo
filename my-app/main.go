@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/plugins/glass"
@@ -92,9 +93,9 @@ func glassButton(c *ui.Context, label string, g glass.Glass, color ui.Color) ui.
 
 func main() {
 	a := newApp()
-	// Checks for a new version once a day in the background and offers to
+	// Checks for a new version every hour in the background and offers to
 	// install it, in a window of native UI (the app shows no web page).
-	mygo.Use(native.Plugin)
+	mygo.Use(native.New(updater.Options{Interval: time.Second * 10}))
 	mygo.App.WhenReady(func() {
 		log.Println("Ready 😊")
 		a.win = mygo.NewWindow(mygo.WindowOptions{
