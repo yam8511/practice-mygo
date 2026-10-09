@@ -61,5 +61,5 @@ if (Test-Path resources) {
         if (Test-Path "resources\$dir") { Copy-Item "resources\$dir\*" $Out -Recurse -Force }
     }
 }
-Copy-Item "$bin\*.dll" $Out -Force
+# Copy-Item "$bin\*.dll" $Out -Force
 Write-Host "built $exe"
