@@ -57,7 +57,7 @@ func (a *app) view(c *ui.Context) {
 func (a *app) card(c *ui.Context) {
 	t := c.Theme()
 	ui.Column(c).Gap(16).Padding(28).Radius(28).AlignItems(ui.Center).Material(glass.Glass{}).Children(func() {
-		ui.Text(c, "my-app").FontSize(26).Bold()
+		ui.Text(c, "My APP").FontSize(26).Bold()
 		ui.TextInput(c, &a.name).Placeholder("Your name").Label("Name").Width(240)
 		greeting := "Hello!"
 		if a.name != "" {
