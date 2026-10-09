@@ -1,7 +1,7 @@
 {
   "name": "my-app",
   "identifier": "com.example.myapp",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "out": "build",
   "updates": {
     "publicKey": "RL4HoX0C+fVT2rjfUohpA25zUCol150HH2nKyBLXCEU=",

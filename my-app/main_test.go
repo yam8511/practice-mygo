@@ -34,7 +34,7 @@ func TestView(t *testing.T) {
 func TestPaint(t *testing.T) {
 	a := newApp()
 	tt := ui.NewTester(a.view, 1000, 700)
-	if err := tt.Click("畫筆"); err != nil {
+	if err := tt.Click("2.畫筆"); err != nil {
 		t.Fatal(err)
 	}
 	r, ok := tt.Find("canvas")
@@ -67,7 +67,7 @@ func TestPaint(t *testing.T) {
 // many DIPs a pixel of the picture shows at.
 func openPaint(t *testing.T, a *app, tt *ui.Tester, tool string) (cx, cy, scale float32) {
 	t.Helper()
-	if err := tt.Click("畫筆"); err != nil {
+	if err := tt.Click("2.畫筆"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tt.Click(tool); err != nil {

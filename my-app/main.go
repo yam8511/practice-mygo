@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/plugins/glass"
@@ -22,9 +21,19 @@ type app struct {
 	count int
 	paint *paint
 	cam   *camera
+
+	// An installed update counts restartIn seconds down to relaunching the
+	// app into restartVersion, sooner when restartNow receives; updated is
+	// the update that was installed before this launch.
+	restartVersion string
+	restartIn      int
+	restartNow     chan struct{}
+	updated        *updated
 }
 
-func newApp() *app { return &app{paint: newPaint(), cam: newCamera()} }
+func newApp() *app {
+	return &app{paint: newPaint(), cam: newCamera(), restartNow: make(chan struct{}, 1)}
+}
 
 func (a *app) view(c *ui.Context) {
 	// Glass shows what is painted under it, so the window gets a colorful
@@ -51,6 +60,7 @@ func (a *app) view(c *ui.Context) {
 				ui.Box(c).Grow(1).Center().Children(func() { a.card(c) })
 			}
 		})
+		a.updateBanner(c)
 	})
 }
 
@@ -93,11 +103,13 @@ func glassButton(c *ui.Context, label string, g glass.Glass, color ui.Color) ui.
 
 func main() {
 	a := newApp()
-	// Checks for a new version every hour in the background and offers to
-	// install it, in a window of native UI (the app shows no web page).
-	mygo.Use(native.New(updater.Options{Interval: time.Second * 10}))
+	// The update window of native UI (the app shows no web page), for
+	// "Check for Updates…": autoUpdate checks in the background instead,
+	// installs without asking and relaunches the app.
+	mygo.Use(native.New(updater.Options{DisableAutomaticChecks: true}))
 	mygo.App.WhenReady(func() {
 		log.Println("Ready 😊")
+		a.updated = loadUpdated()
 		a.win = mygo.NewWindow(mygo.WindowOptions{
 			Title: "my-app",
 			// Width:     480,
@@ -111,6 +123,7 @@ func main() {
 			// Maximized: true,
 			FullScreen: true,
 		})
+		go a.autoUpdate()
 		log.Println("Ready Done😊")
 	})
 	log.Println("Run 🏃‍♂️")
